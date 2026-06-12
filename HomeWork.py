@@ -214,7 +214,6 @@ def main():
     st.set_page_config(page_title="AI 多模態多生評分系統", layout="wide")
     st.title("📑 全自動考卷批改工作台 (多生批閱版)")
 
-    # 💡 核心修改：DataFrame 多了「學生姓名」欄位
     if "df" not in st.session_state:
         st.session_state.df = pd.DataFrame(columns=["學生姓名", "題目", "問題內容", "學生作答(影像物件)", "標準答案", "配分", "得分", "AI 評分理由"])
 
@@ -236,7 +235,6 @@ def main():
         pdf_p = st.file_uploader("3. 配分 PDF", type="pdf")
         
         st.write("---")
-        # 💡 核心修改：允許同時選擇並上傳多個學生檔案 (accept_multiple_files=True)
         pdf_s_list = st.file_uploader("4. 學生作答 PDF (可一次選取多個檔案)", type="pdf", accept_multiple_files=True)
         
         if st.button("🚀 開始全自動解析") and pdf_q and pdf_s_list and pdf_a and pdf_p:
@@ -245,16 +243,14 @@ def main():
                 a_bytes = pdf_a.read()
                 p_bytes = pdf_p.read()
 
-                # 基本考卷結構只需解析一次
                 q_texts = detect_and_extract_blocks(q_bytes, return_images=False)
                 a_texts = detect_and_extract_blocks(a_bytes, return_images=False)
                 p_texts = detect_and_extract_blocks(p_bytes, return_images=False)
                 
                 all_student_data = []
                 
-                # 💡 核心修改：利用迴圈依序處理每位學生的 PDF
                 for pdf_s in pdf_s_list:
-                    student_name = pdf_s.name.replace(".pdf", "") # 以檔名作為學生識別名稱
+                    student_name = pdf_s.name.replace(".pdf", "")
                     s_bytes = pdf_s.read()
                     s_images = detect_and_extract_blocks(s_bytes, return_images=True)
                     
@@ -277,150 +273,219 @@ def main():
 
     # --- 主要展示區塊 ---
     if len(st.session_state.df) > 0:
-        # 💡 核心修改：新增「切換觀看學生」的下拉選單
-        student_list = st.session_state.df["學生姓名"].unique().tolist()
-        selected_student = st.selectbox("👤 請選擇要檢視/批改的學生：", student_list)
         
-        # 篩選出目前選定學生的資料
-        student_mask = st.session_state.df["學生姓名"] == selected_student
-        current_student_df = st.session_state.df[student_mask].copy()
-
-        col1, col2 = st.columns([7, 5])
+        # 🌟 建立兩個分頁，切換不同的視角
+        tab_summary, tab_detail = st.tabs(["🏆 全班成績大考查 (總分與每題明細)", "🔍 盲區視覺複核工作台"])
         
-        with col1:
-            st.subheader(f"📝 {selected_student} 的結構化評分表")
+        # ==========================================
+        # 分頁 1：全班成績大考查 (解決你的核心痛點)
+        # ==========================================
+        with tab_summary:
+            st.subheader("📊 班級成績總覽與章節題得分")
             
-            display_df = current_student_df.copy()
-            display_df["學生作答(影像物件)"] = display_df["學生作答(影像物件)"].apply(
-                lambda x: "📷 影像已就緒 (請用下方下拉選單切換檢視)" if x is not None else "⚠️ 無影像"
-            )
-
-            # 資料編輯器（不顯示學生姓名欄位，免得畫面太擠）
-            edited_display_df = st.data_editor(
-                display_df.drop(columns=["學生姓名"]),
-                num_rows="dynamic",
+            # 1. 建立控制與一鍵自動化按鈕
+            btn_col1, btn_col2 = st.columns([1, 3])
+            with btn_col1:
+                run_all_ai = st.button("🚀 一鍵批改全班考卷", use_container_width=True, key="summary_run_all")
+            with btn_col2:
+                st.caption("💡 點擊按鈕將調用 Gemini 2.5 Pro 對全部學生、所有題目進行批改。")
+            
+            # 計算每位學生的總分
+            # 預先處理配分與得分為數字型態以防加總出錯
+            df_calc = st.session_state.df.copy()
+            df_calc["得分"] = pd.to_numeric(df_calc["得分"], errors="coerce").fillna(0.0)
+            df_calc["配分"] = pd.to_numeric(df_calc["配分"], errors="coerce").fillna(0.0)
+            
+            summary_scores = df_calc.groupby("學生姓名")["得分"].sum().reset_index()
+            summary_scores = summary_scores.sort_values(by="得分", ascending=False)
+            
+            st.markdown("---")
+            st.markdown("### 👥 學生總分排行榜")
+            
+            # 使用更簡潔好看的表格列出所有同學總分
+            st.dataframe(
+                summary_scores,
+                column_config={
+                    "學生姓名": st.column_config.TextColumn("學生姓名", width="medium"),
+                    "得分": st.column_config.NumberColumn("目前總得分", format="%.1f 分"),
+                },
                 use_container_width=True,
-                height=350,
-                key=f"editor_{selected_student}" # 用學生名字當 key 防止渲染衝突
+                hide_index=True
             )
             
-            # 回填編輯後的資料到原總 session_state 表格中
-            if len(edited_display_df) == len(current_student_df):
-                indices = current_student_df.index
-                st.session_state.df.loc[indices, "得分"] = edited_display_df["得分"].values
-                st.session_state.df.loc[indices, "AI 評分理由"] = edited_display_df["AI 評分理由"].values
-                st.session_state.df.loc[indices, "問題內容"] = edited_display_df["問題內容"].values
-                st.session_state.df.loc[indices, "標準答案"] = edited_display_df["標準答案"].values
-                st.session_state.df.loc[indices, "配分"] = edited_display_df["配分"].values
+            st.markdown("---")
+            st.markdown("### 📑 各生每題得分詳細清單")
+            st.info("💡 點擊下方同學的名字區塊（Expander），即可直接展開查看該生「每一題的分數」與「評分理由」！")
+            
+            # 遍歷每位學生，建立專屬的可折疊區塊
+            for student in summary_scores["學生姓名"].tolist():
+                student_mask = df_calc["學生姓名"] == student
+                student_df = df_calc[student_mask]
+                student_total = summary_scores[summary_scores["學生姓名"] == student]["得分"].values[0]
+                
+                with st.expander(f"👤 {student} ─── 總得分：{student_total:.1f} 分", expanded=False):
+                    
+                    # 建立精簡版的每題得分 DataFrame
+                    brief_detail = student_df[["題目", "配分", "得分", "AI 評分理由"]].copy()
+                    
+                    # 透過 data_editor 展現，不僅能看，老師還能直接在格子內手動改分數！
+                    edited_brief = st.data_editor(
+                        brief_detail,
+                        use_container_width=True,
+                        hide_index=True,
+                        key=f"summary_edit_{student}",
+                        column_config={
+                            "題目": st.column_config.TextColumn("題號", disabled=True),
+                            "配分": st.column_config.NumberColumn("最高配分", disabled=True, format="%d 分"),
+                            "得分": st.column_config.NumberColumn("得分", min_value=0.0, max_value=100.0, format="%.1f"),
+                            "AI 評分理由": st.column_config.TextColumn("AI 評分理由/講評", width="large")
+                        }
+                    )
+                    
+                    # 如果老師在總覽區手動修改了分數，即時回填數據源
+                    if not edited_brief.equals(brief_detail):
+                        st.session_state.df.loc[student_df.index, "得分"] = edited_brief["得分"].values
+                        st.session_state.df.loc[student_df.index, "AI 評分理由"] = edited_brief["AI 評分理由"].values
+                        st.rerun()
 
-            try:
+        # ==========================================
+        # 分頁 2：原有的盲區視覺複核工作台 (看單題題目、對齊標準答案與影像)
+        # ==========================================
+        with tab_detail:
+            student_list = st.session_state.df["學生姓名"].unique().tolist()
+            selected_student = st.selectbox("👤 請選擇要進行視覺核對的學生：", student_list, key="detail_student_select")
+            
+            student_mask = st.session_state.df["學生姓名"] == selected_student
+            current_student_df = st.session_state.df[student_mask].copy()
+
+            col1, col2 = st.columns([7, 5])
+            
+            with col1:
+                st.subheader(f"📝 {selected_student} 的單題細節")
+                
+                display_df = current_student_df.copy()
+                display_df["學生作答(影像物件)"] = display_df["學生作答(影像物件)"].apply(
+                    lambda x: "📷 影像已就緒" if x is not None else "⚠️ 無影像"
+                )
+
+                edited_display_df = st.data_editor(
+                    display_df.drop(columns=["學生姓名"]),
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    height=300,
+                    key=f"editor_{selected_student}"
+                )
+                
+                if len(edited_display_df) == len(current_student_df):
+                    indices = current_student_df.index
+                    st.session_state.df.loc[indices, "得分"] = edited_display_df["得分"].values
+                    st.session_state.df.loc[indices, "AI 評分理由"] = edited_display_df["AI 評分理由"].values
+                    st.session_state.df.loc[indices, "問題內容"] = edited_display_df["問題內容"].values
+                    st.session_state.df.loc[indices, "標準答案"] = edited_display_df["標準答案"].values
+                    st.session_state.df.loc[indices, "配分"] = edited_display_df["配分"].values
+
                 current_score = pd.to_numeric(st.session_state.df[student_mask]["得分"]).sum()
-            except Exception:
-                current_score = 0
-
-            btn_col, score_col = st.columns([1, 1])
-            with btn_col:
-                run_ai = st.button(f"🤖 執行 Gemini 自動批改 ({selected_student})", use_container_width=True)
-                run_all_ai = st.button("🚀 一鍵批改「所有」學生", use_container_width=True)
-            with score_col:
-                st.markdown(f"### 🎯 該生總分：{current_score:.1f}")
-
-            st.write("---")
-            st.subheader("🔍 切換檢視題號")
-            q_list = current_student_df["題目"].tolist()
-            selected_q_name = st.selectbox("請選擇你想在右側複核的題目：", q_list, index=0)
-            selected_idx = q_list.index(selected_q_name) if selected_q_name in q_list else 0
-
-            # 批改個別學生邏輯
-            if run_ai:
-                temp_df = st.session_state.df.copy()
-                target_indices = temp_df[temp_df["學生姓名"] == selected_student].index
-                status_text = st.empty()
                 
-                for count, index in enumerate(target_indices):
-                    status_text.markdown(f"⏳ **Gemini 正在批改 {selected_student} 第 {count + 1} 題...**")
-                    row = temp_df.loc[index]
-                    student_img = row["學生作答(影像物件)"]
+                btn_col, score_col = st.columns([1, 1])
+                with btn_col:
+                    run_ai = st.button(f"🤖 批改這位學生 ({selected_student})", use_container_width=True, key="run_single_ai")
+                with score_col:
+                    st.markdown(f"### 🎯 該生總分：{current_score:.1f}")
+
+                st.write("---")
+                st.subheader("🔍 題號影像定位切換")
+                q_list = current_student_df["題目"].tolist()
+                selected_q_name = st.selectbox("請選擇你想在右側複核的題目：", q_list, index=0, key="q_select_detail")
+                selected_idx = q_list.index(selected_q_name) if selected_q_name in q_list else 0
+
+            with col2:
+                st.subheader("🔍 盲區視覺複核面板")
+                if selected_idx is not None and selected_idx < len(current_student_df):
+                    row_data = current_student_df.iloc[selected_idx]
+                    st.markdown(f"#### 📋 當前檢視：**{selected_student} - {row_data['題目']}**")
+                    st.markdown(f"**問題：** {row_data['問題內容']}")
+                    st.markdown(f"**標準答案：** {row_data['標準答案']}")
                     
-                    if student_img is not None:
-                        # (此處保留您原本的 Prompt 設計，精簡排版)
-                        prompt = (
-                            f"你是一位溫和、具鼓勵性質的專業審查老師。目前正在批改學生的作答內容，評分核心原則為「從寬給分」。\n\n"
-                            f"【單題題目資訊】\n問題內容：{row['問題內容']}\n標準答案：{row['標準答案']}\n最高配分：{row['配分']} 分。\n\n"
-                            f"【任務說明】\n1. 審視圖片內學生的手寫答案。\n2. 給予 0 到 {row['配分']} 之間的合理分數。\n3. 詳細列出評分理由。\n"
-                        )
-                        try:
-                            response = gemini_client.models.generate_content(
-                                model='gemini-2.5-pro',  
-                                contents=[prompt, student_img],
-                                config=types.GenerateContentConfig(
-                                    response_mime_type="application/json",
-                                    response_schema=GradingResult,
-                                    temperature=0.1, 
-                                ),
-                            )
-                            result: GradingResult = response.parsed
-                            temp_df.at[index, "得分"] = float(result.score)
-                            temp_df.at[index, "AI 評分理由"] = result.reason
-                        except Exception as e:
-                            st.warning(f"第 {count+1} 題評分錯誤: {e}")
+                    img_obj = row_data["學生作答(影像物件)"]
+                    if img_obj is not None:
+                        st.image(img_obj, use_container_width=True, caption=f"{selected_student} {row_data['題目']} 盲區裁剪影像")
                     else:
-                        temp_df.at[index, "得分"] = 0.0
-                        temp_df.at[index, "AI 評分理由"] = "未偵測到學生作答圖片，以 0 分計算。"
-                
-                status_text.empty()
-                st.session_state.df = temp_df
-                st.success(f"🎉 {selected_student} 批改完成！")
-                st.rerun()
+                        st.warning("⚠️ 該題無對應的學生作答影像")
 
-            # 一鍵批改所有人邏輯
-            if run_all_ai:
-                temp_df = st.session_state.df.copy()
-                status_text = st.empty()
-                total_rows = len(temp_df)
+        # ==========================================
+        # 共享的一鍵批改所有人核心邏輯 (兩個分頁按鈕皆能觸發)
+        # ==========================================
+        if run_all_ai:
+            temp_df = st.session_state.df.copy()
+            status_text = st.empty()
+            total_rows = len(temp_df)
+            
+            for count, (index, row) in enumerate(temp_df.iterrows()):
+                status_text.markdown(f"🚀 **一鍵總批改中：正在批改 [{row['學生姓名']}] 的 {row['題目']} ({count+1}/{total_rows})...**")
+                student_img = row["學生作答(影像物件)"]
                 
-                for count, (index, row) in enumerate(temp_df.iterrows()):
-                    status_text.markdown(f"🚀 **一鍵總批改中：正在批改 [{row['學生姓名']}] 的 {row['題目']} ({count+1}/{total_rows})...**")
-                    student_img = row["學生作答(影像物件)"]
-                    
-                    if student_img is not None:
-                        prompt = (
-                            f"你是一位溫和、具鼓勵性質的專業審查老師。目前正在批改學生的作答內容，評分核心原則為「從寬給分」。\n\n"
-                            f"【單題題目資訊】\n問題內容：{row['問題內容']}\n標準答案：{row['標準答案']}\n最高配分：{row['配分']} 分。\n\n"
+                if student_img is not None:
+                    prompt = (
+                        f"你是一位溫和、具鼓勵性質的專業審查老師。目前正在批改學生的作答內容，評分核心原則為「從寬給分」。\n\n"
+                        f"【單題題目資訊】\n問題內容：{row['問題內容']}\n標準答案：{row['標準答案']}\n最高配分：{row['配分']} 分。\n\n"
+                    )
+                    try:
+                        response = gemini_client.models.generate_content(
+                            model='gemini-2.5-pro',  
+                            contents=[prompt, student_img],
+                            config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=GradingResult, temperature=0.1),
                         )
-                        try:
-                            response = gemini_client.models.generate_content(
-                                model='gemini-2.5-pro',  
-                                contents=[prompt, student_img],
-                                config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=GradingResult, temperature=0.1),
-                            )
-                            result: GradingResult = response.parsed
-                            temp_df.at[index, "得分"] = float(result.score)
-                            temp_df.at[index, "AI 評分理由"] = result.reason
-                        except Exception:
-                            pass
-                    else:
-                        temp_df.at[index, "得分"] = 0.0
-                        temp_df.at[index, "AI 評分理由"] = "無影像物件"
-                
-                status_text.empty()
-                st.session_state.df = temp_df
-                st.success("🎉 所有學生全部批改完畢！")
-                st.rerun()
-                
-        with col2:
-            st.subheader("🔍 盲區視覺複核面板")
-            if selected_idx is not None and selected_idx < len(current_student_df):
-                row_data = current_student_df.iloc[selected_idx]
-                st.markdown(f"#### 📋 當前檢視：**{selected_student} - {row_data['題目']}**")
-                st.markdown(f"**問題：** {row_data['問題內容']}")
-                st.markdown(f"**標準答案：** {row_data['標準答案']}")
-                
-                img_obj = row_data["學生作答(影像物件)"]
-                if img_obj is not None:
-                    st.image(img_obj, use_container_width=True, caption=f"{selected_student} {row_data['題目']} 盲區裁剪影像")
+                        result: GradingResult = response.parsed
+                        temp_df.at[index, "得分"] = float(result.score)
+                        temp_df.at[index, "AI 評分理由"] = result.reason
+                    except Exception:
+                        pass
                 else:
-                    st.warning("⚠️ 該題無對應的學生作答影像")
+                    temp_df.at[index, "得分"] = 0.0
+                    temp_df.at[index, "AI 評分理由"] = "無影像物件"
+            
+            status_text.empty()
+            st.session_state.df = temp_df
+            st.success("🎉 所有學生全部批改完畢！")
+            st.rerun()
+
+        # 共享的單人批改核心邏輯
+        if 'run_ai' in locals() and run_ai:
+            temp_df = st.session_state.df.copy()
+            target_indices = temp_df[temp_df["學生姓名"] == selected_student].index
+            status_text = st.empty()
+            
+            for count, index in enumerate(target_indices):
+                status_text.markdown(f"⏳ **Gemini 正在批改 {selected_student} 第 {count + 1} 題...**")
+                row = temp_df.loc[index]
+                student_img = row["學生作答(影像物件)"]
+                
+                if student_img is not None:
+                    prompt = (
+                        f"你是一位溫和、具鼓勵性質的專業審查老師。目前正在批改學生的作答內容，評分核心原則為「從寬給分」。\n\n"
+                        f"【單題題目資訊】\n問題內容：{row['問題內容']}\n標準答案：{row['標準答案']}\n最高配分：{row['配分']} 分。\n\n"
+                        f"【任務說明】\n1. 審視圖片內學生的手寫答案。\n2. 給予 0 到 {row['配分']} 之間的合理分數。\n3. 詳細列出評分理由。\n"
+                    )
+                    try:
+                        response = gemini_client.models.generate_content(
+                            model='gemini-2.5-pro',  
+                            contents=[prompt, student_img],
+                            config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=GradingResult, temperature=0.1),
+                        )
+                        result: GradingResult = response.parsed
+                        temp_df.at[index, "得分"] = float(result.score)
+                        temp_df.at[index, "AI 評分理由"] = result.reason
+                    except Exception as e:
+                        st.warning(f"第 {count+1} 題評分錯誤: {e}")
+                else:
+                    temp_df.at[index, "得分"] = 0.0
+                    temp_df.at[index, "AI 評分理由"] = "未偵測到學生作答圖片，以 0 分計算。"
+            
+            status_text.empty()
+            st.session_state.df = temp_df
+            st.success(f"🎉 {selected_student} 批改完成！")
+            st.rerun()
+
     else:
         st.info("💡 請在左側欄上傳題目、標準答案、配分以及「多位學生」的作答 PDF，並點擊開始全自動解析。")
 
