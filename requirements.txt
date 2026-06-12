@@ -1,0 +1,12 @@
+streamlit>=1.35.0
+pandas
+numpy
+opencv-python-headless
+pdfplumber
+Pillow
+pdf2image
+google-cloud-vision
+google-genai
+pydantic
+poppler-utils
+openai
